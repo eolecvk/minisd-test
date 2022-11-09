@@ -12,10 +12,13 @@ from torchvision.utils import make_grid
 import numpy as np
 
 
-seed_everything(42)
-torch.backends.cuda.matmul.allow_tf32 = True  # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+# cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+torch.backends.cuda.matmul.allow_tf32 = True 
 torch.backends.cudnn.allow_tf32 = True
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+seed_everything(42)
 
 prompts = [
     "A photo of an astronaut riding a horse on mars",
@@ -37,7 +40,7 @@ def do_inference(pipe, n_samples, use_autocast, num_inference_steps):
 
 
 def get_inference_time(
-    pipe, n_samples=1, n_repeats=3, use_autocast=False, num_inference_steps=45
+    pipe, n_samples=1, n_repeats=3, use_autocast=False, num_inference_steps=50
 ):
     from torch.utils.benchmark import Timer
 
@@ -58,7 +61,7 @@ def get_inference_time(
     return round(profile_result.mean, 2)
 
 
-def get_inference_memory(pipe, n_samples=1, use_autocast=False, num_inference_steps=45):
+def get_inference_memory(pipe, n_samples=1, use_autocast=False, num_inference_steps=50):
     if not torch.cuda.is_available():
         return 0
 
@@ -73,13 +76,34 @@ def get_inference_memory(pipe, n_samples=1, use_autocast=False, num_inference_st
     return round(mem / 1e9, 2)
 
 
-def run_experiments():
-    prompts = [
-        "A photo of an astronaut riding a horse on mars",
-        "Baby seal lounging on a beach",
-        "Hyperrealistic mesmerizing portrait of Jimi Hendrix floating in spirals of iridescent light",
-    ]
+def run_experiment(model_id, model_path, size=256):
 
+        run = wandb.init(project="MiniSD", name=f"{model_id}_{size}")
+        pipe = DiffusionPipeline.from_pretrained(model_path).to("cuda")
+        def null_safety(images, **kwargs):
+            return images, False
+        pipe.safety_checker = null_safety
+
+        inference_time = get_inference_time(pipe)
+        memory_usage = get_inference_memory(pipe)
+
+        wandb.log(
+           {"runtime": inference_time,
+           "memory": memory_usage})
+
+        for prompt in prompts:
+            image = pipe(prompt=prompt, height=size, width=size).images[0]
+            wandb.log({ prompt : wandb.Image(image, caption=prompt)})
+
+        run.finish()
+
+
+def run_experiments():
+
+    # 512x512 run (sd1.4 only)
+    run_experiment("sd-v1.4", "CompVis/stable-diffusion-v1-4", 512)
+
+    # 256x256 runs
     for model_path, model_id in [
         ("/home/eole/Desktop/minisd_attention-only_ema", "miniSD_attention-only_ema"),
         (
@@ -90,29 +114,7 @@ def run_experiments():
         ("/home/eole/Desktop/minisd_full_no-ema", "miniSD_full_no-ema"),
         ("CompVis/stable-diffusion-v1-4", "sd-v1.4"),
     ]:
-        run = wandb.init(project="miniSD", name=model_id)
-
-        pipe = DiffusionPipeline.from_pretrained(model_path).to("cuda")
-
-        def null_safety(images, **kwargs):
-            return images, False
-
-        pipe.safety_checker = null_safety
-
-        # Compute inference speed, memory usage
-        inference_time = get_inference_time(pipe)
-        memory_usage = get_inference_memory(pipe)
-
-        wandb.log(
-            {"runtime": inference_time,
-            "memory": memory_usage})
-
-        # Compute sample images
-        for prompt in prompts:
-            image = pipe(prompt).images[0]
-            wandb.log({ prompt : wandb.Image(image, caption=prompt)})
-
-        run.finish()
+        run_experiment(model_id, model_path, size=256)
 
 
 
