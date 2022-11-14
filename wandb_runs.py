@@ -26,9 +26,12 @@ prompts = [
     "Hyperrealistic mesmerizing portrait of Jimi Hendrix floating in spirals of iridescent light",
 ]
 prompt = prompts[0]
+N_STEPS = 25
+N_SAMPLES = 8
+FLASH_ATTENTION = True
 
 
-def do_inference(pipe, n_samples, use_autocast, num_inference_steps):
+def do_inference(pipe, n_samples, use_autocast, num_inference_steps=N_STEPS):
     torch.cuda.empty_cache()
     context = autocast if (device.type == "cuda" and use_autocast) else nullcontext
     with context("cuda"):
@@ -40,7 +43,7 @@ def do_inference(pipe, n_samples, use_autocast, num_inference_steps):
 
 
 def get_inference_time(
-    pipe, n_samples=1, n_repeats=3, use_autocast=False, num_inference_steps=50
+    pipe, n_samples=N_SAMPLES, n_repeats=3, use_autocast=False, num_inference_steps=N_STEPS
 ):
     from torch.utils.benchmark import Timer
 
@@ -61,7 +64,7 @@ def get_inference_time(
     return round(profile_result.mean, 2)
 
 
-def get_inference_memory(pipe, n_samples=1, use_autocast=False, num_inference_steps=50):
+def get_inference_memory(pipe, n_samples=N_SAMPLES, use_autocast=False, num_inference_steps=N_STEPS):
     if not torch.cuda.is_available():
         return 0
 
@@ -78,11 +81,15 @@ def get_inference_memory(pipe, n_samples=1, use_autocast=False, num_inference_st
 
 def run_experiment(model_id, model_path, size=256):
 
-        run = wandb.init(project="MiniSD", name=f"{model_id}_{size}")
+        run = wandb.init(entity='lambdalabs', project="MiniSD", name=f"{model_id}_{size}")
         pipe = DiffusionPipeline.from_pretrained(model_path).to("cuda")
         def null_safety(images, **kwargs):
             return images, False
         pipe.safety_checker = null_safety
+
+        if FLASH_ATTENTION:
+            pipe.enable_xformers_memory_efficient_attention()
+
 
         inference_time = get_inference_time(pipe)
         memory_usage = get_inference_memory(pipe)
